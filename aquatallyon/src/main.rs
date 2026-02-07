@@ -29,8 +29,8 @@ async fn main() {
     let bot = Bot::from_env();
 
     let handler = dptree::entry()
-        .branch(Update::filter_message().endpoint(send_menu));
-        // .branch(Update::filter_callback_query().endpoint(receive_btn_press));
+        .branch(Update::filter_message().endpoint(send_menu))
+        .branch(Update::filter_callback_query().endpoint(receive_btn_press));
 
     Dispatcher::builder(bot, handler)
         .dependencies(dptree::deps![state])
@@ -88,31 +88,51 @@ async fn send_menu(
 
     Ok(())
 }
+async fn receive_btn_press(
+    bot: Bot,
+    state: SharedState, // Removed mut: Arc handles cloning, RwLock handles mutability
+    q: CallbackQuery,
+) -> ResponseResult<()> {
+    let user_name = q.from.username.clone().unwrap_or_else(|| "unknown".into());
+    let user_id = q.from.id.0;
 
-// async fn receive_btn_press(
-//     bot: Bot,
-//     mut state: SharedState,
-//     q: CallbackQuery
-// ) -> ResponseResult<()> {
-//     let user_name = q.from.username.as_deref().unwrap_or("unknown user");
-//     let user_id = q.from.id.0;
+    // 1. SCOPED BLOCK: Update the state and generate new UI data
+    // This block ensures the WriteGuard is dropped before any .await
+    let (report_text, keyboard) = {
+        let mut week = state.write();
 
-//     let mut response_text = "Issue with callback".to_string();
+        if let Some(data) = q.data.as_deref() {
+            if let Some(id_str) = data.strip_prefix("checkin_") {
+                if let Ok(id) = id_str.parse::<u8>() {
+                    if let Some(session) = week.get_session_mut(id) {
+                        // Toggle logic: Remove if present, add if not
+                        if let Some(pos) = session.attendees.iter().position(|u| u.telegram_id == user_id) {
+                            session.attendees.remove(pos);
+                        } else {
+                            session.attendees.push(User {
+                                telegram_id: user_id,
+                                alias: user_name,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Generate the new report and keyboard while we still have the lock
+        let text = generate_attendance_report(&week);
+        let kb = main_menu_keyboard(&week.sessions);
+        (text, kb) 
+    }; // <--- RwLockWriteGuard is dropped HERE
 
-//     let text = match q.data.as_deref() {
-//         Some(data) if data.starts_with("checkin_") => {
-//             let id = data.replace("checkin_", "");
-//             let mut week = state
-//         }
-//         _ => "Issue with callback".to_string(),
-//     };
+    // 2. Now we can safely await without Send-bound issues
+    if let Some(teloxide::types::MaybeInaccessibleMessage::Regular(msg)) = q.message {
+        bot.edit_message_text(msg.chat.id, msg.id, report_text)
+            .parse_mode(teloxide::types::ParseMode::Html)
+            .reply_markup(keyboard)
+            .await?;
+    }
 
-//     if let Some(MaybeInaccessibleMessage::Regular(msg)) = q.message {
-//         bot.edit_message_text(msg.chat.id, msg.id, text)
-//             .reply_markup(main_menu_keyboard(&state.sessions))
-//             .await?;
-//     }
-
-//     bot.answer_callback_query(q.id).await?;
-//     Ok(())
-// }
+    bot.answer_callback_query(q.id).await?;
+    Ok(())
+}
