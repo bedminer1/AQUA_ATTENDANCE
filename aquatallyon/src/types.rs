@@ -1,5 +1,5 @@
 use serde::{ Serialize, Deserialize };
-use teloxide::types::InlineKeyboardButton;
+use teloxide::types::{InlineKeyboardButton};
 use std::sync::{Arc, RwLock};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,4 +37,20 @@ impl WeeklyAttendance {
     }
 }
 
-pub type SharedState = Arc<WeeklyAttendance>;
+#[derive(Clone)]
+pub struct SharedState(pub Arc<RwLock<WeeklyAttendance>>);
+
+impl SharedState {
+    pub fn new(initial: WeeklyAttendance) -> Self {
+        Self(Arc::new(RwLock::new(initial)))
+    }
+
+    // Helper to make your handlers cleaner
+    pub fn read(&self) -> std::sync::RwLockReadGuard<'_, WeeklyAttendance> {
+        self.0.read().expect("Lock poisoned")
+    }
+
+    pub fn write(&self) -> std::sync::RwLockWriteGuard<'_, WeeklyAttendance> {
+        self.0.write().expect("Lock poisoned")
+    }
+}

@@ -1,8 +1,7 @@
 use teloxide::{
     prelude::*, 
-    types::{ InlineKeyboardMarkup, MaybeInaccessibleMessage},
+    types::{ InlineKeyboardMarkup, MaybeInaccessibleMessage, Me},
 };
-use std::sync::{Arc, RwLock};
 
 mod types;
 use crate::types::*;
@@ -26,11 +25,12 @@ async fn main() {
         ],
     };
 
-    let mut state = Arc::new(initial_state);
+    let state = SharedState::new(initial_state);
     let bot = Bot::from_env();
 
     let handler = dptree::entry()
         .branch(Update::filter_message().endpoint(send_menu));
+        // .branch(Update::filter_callback_query().endpoint(receive_btn_press));
 
     Dispatcher::builder(bot, handler)
         .dependencies(dptree::deps![state])
@@ -71,17 +71,48 @@ fn generate_attendance_report(state: &WeeklyAttendance) -> String {
 
 async fn send_menu(
     bot: Bot,
-    mut state: SharedState,
+    state: SharedState,
     msg: Message
 ) -> ResponseResult<()> {
-    let week = Arc::make_mut(&mut state);
-    let text = generate_attendance_report(&week);
-    println!("{}", text);
-
+    let (text, keyboard) = {
+        let weekly_attendance = state.read();
+        let t = generate_attendance_report(&weekly_attendance);
+        let k = main_menu_keyboard(&weekly_attendance.sessions);
+        (t, k) // Return the data we need, dropping the guard here
+    };
+    
     bot.send_message(msg.chat.id, text)
         .parse_mode(teloxide::types::ParseMode::Html) // Use V2 for better formatting
-        .reply_markup(main_menu_keyboard(&week.sessions))
+        .reply_markup(keyboard)
         .await?;
 
     Ok(())
 }
+
+// async fn receive_btn_press(
+//     bot: Bot,
+//     mut state: SharedState,
+//     q: CallbackQuery
+// ) -> ResponseResult<()> {
+//     let user_name = q.from.username.as_deref().unwrap_or("unknown user");
+//     let user_id = q.from.id.0;
+
+//     let mut response_text = "Issue with callback".to_string();
+
+//     let text = match q.data.as_deref() {
+//         Some(data) if data.starts_with("checkin_") => {
+//             let id = data.replace("checkin_", "");
+//             let mut week = state
+//         }
+//         _ => "Issue with callback".to_string(),
+//     };
+
+//     if let Some(MaybeInaccessibleMessage::Regular(msg)) = q.message {
+//         bot.edit_message_text(msg.chat.id, msg.id, text)
+//             .reply_markup(main_menu_keyboard(&state.sessions))
+//             .await?;
+//     }
+
+//     bot.answer_callback_query(q.id).await?;
+//     Ok(())
+// }
