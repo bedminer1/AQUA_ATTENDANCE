@@ -1,88 +1,87 @@
 use teloxide::{
     prelude::*, 
-    types::{InlineKeyboardButton, InlineKeyboardMarkup, MaybeInaccessibleMessage},
+    types::{ InlineKeyboardMarkup, MaybeInaccessibleMessage},
 };
+use std::sync::{Arc, RwLock};
 
-#[derive(Default)]
-struct TrainingSession {
-    id: u8,
-    activity: String,
-    location: String,
-    timing: String,
-}
-
-fn get_weekly_schedule() -> Vec<TrainingSession> {
-    vec![
-        TrainingSession { id: 1, activity: "Swim".into(), location: "USC Pool".into(), timing: "Monday".into() },
-        TrainingSession { id: 2, activity: "Run".into(), location: "NUS Track".into(), timing: "Tuesday".into() },
-        TrainingSession { id: 3, activity: "Swim".into(), location: "USC Pool".into(), timing: "Wednesday".into() },
-        TrainingSession { id: 4, activity: "Run".into(), location: "NUS Track".into(), timing: "Thursday".into() },
-        TrainingSession { id: 5, activity: "Swim".into(), location: "USC Pool".into(), timing: "Friday".into() },
-        TrainingSession { id: 6, activity: "Bricks".into(), location: "Palawan Beach".into(), timing: "Saturday".into() },
-    ]
-}
+mod types;
+use crate::types::*;
 
 #[tokio::main]
 async fn main() {
     dotenvy::dotenv().ok();
     pretty_env_logger::init();
-    log::info!("Starting command bot...");
+    log::info!("Starting aquathallyon bot...");
 
+    let initial_state = WeeklyAttendance {
+        start_date: "2026-02-02".into(),
+        end_date: "2026-02-08".into(),
+        sessions: vec![
+            TrainingSession { id: 1, activity: "Swim".into(), location: "USC Pool".into(), day: "Monday".into(), attendees: vec![] },
+            TrainingSession { id: 2, activity: "Run".into(), location: "NUS Track".into(), day: "Tuesday".into(), attendees: vec![] },
+            TrainingSession { id: 3, activity: "Swim".into(), location: "USC Pool".into(), day: "Wednesday".into(), attendees: vec![] },
+            TrainingSession { id: 4, activity: "Run".into(), location: "NUS Track".into(), day: "Thursday".into(), attendees: vec![] },
+            TrainingSession { id: 5, activity: "Swim".into(), location: "USC Pool".into(), day: "Friday".into(), attendees: vec![] },
+            TrainingSession { id: 6, activity: "Bricks".into(), location: "Palawan Beach".into(), day: "Saturday".into(), attendees: vec![] },
+        ],
+    };
+
+    let mut state = Arc::new(initial_state);
     let bot = Bot::from_env();
 
     let handler = dptree::entry()
-        .branch(Update::filter_message().endpoint(send_menu))
-        .branch(Update::filter_callback_query().endpoint(receive_callback));
+        .branch(Update::filter_message().endpoint(send_menu));
 
-    Dispatcher::builder(bot, handler).enable_ctrlc_handler().build().dispatch().await;
+    Dispatcher::builder(bot, handler)
+        .dependencies(dptree::deps![state])
+        .enable_ctrlc_handler()
+        .build()
+        .dispatch()
+        .await;
 }
 
-fn main_menu_keyboard(trainings: Vec<TrainingSession>) -> InlineKeyboardMarkup {
-    let rows: Vec<Vec<InlineKeyboardButton>> = trainings
+fn main_menu_keyboard(trainings: &[TrainingSession]) -> InlineKeyboardMarkup {
+    let rows = trainings
         .iter()
-        .map(|s| {
-            vec![InlineKeyboardButton::callback(
-                format!("{}: {} @ {}", s.timing, s.activity, s.location),
-                format!("checkin_{}", s.id),
-            )]
-        })
-        .collect();
+        .map(|s| vec![s.make_button()])
+        .collect::<Vec<_>>();
 
     InlineKeyboardMarkup::new(rows)
 }
 
-async fn send_menu(bot: Bot, msg: Message) -> ResponseResult<()> {
+fn generate_attendance_report(state: &WeeklyAttendance) -> String {
+    let header = format!("📅 <b>Week: {} to {}</b>\n\n", state.start_date, state.end_date);
+    
+    let body = state.sessions.iter().map(|s| {
+        let attendees = if s.attendees.is_empty() {
+            "<i>No one yet</i>".to_string()
+        } else {
+            let list = s.attendees.iter()
+                .map(|u| format!("@{}", u.alias))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("└ {}", list)
+        };
+        
+        format!("<b>{} {}</b> (@ {})\n{}\n", s.day, s.activity, s.location, attendees)
+    }).collect::<Vec<_>>().join("\n");
 
-    bot.send_message(msg.chat.id, "Welcome to AquaTallyon! Choose an option:")
-        .reply_markup(main_menu_keyboard(get_weekly_schedule()))
-        .await?;
-
-    Ok(())
+    format!("{}{}", header, body)
 }
 
-async fn receive_callback(bot: Bot, q: CallbackQuery) -> ResponseResult<()> {
-    let user_name = q.from.username.as_deref().unwrap_or("Friend");
-    let trainings = get_weekly_schedule();
+async fn send_menu(
+    bot: Bot,
+    mut state: SharedState,
+    msg: Message
+) -> ResponseResult<()> {
+    let week = Arc::make_mut(&mut state);
+    let text = generate_attendance_report(&week);
+    println!("{}", text);
 
-    let text = match q.data.as_deref() {
-        Some(data) if data.starts_with("checkin_") => {
-            let id_str = data.replace("checkin_", "");
-            let session_name = trainings.iter()
-                .find(|s| s.id.to_string() == id_str)
-                .map(|s| format!("{} {}", s.timing, s.activity))
-                .unwrap_or_else(|| "Training".to_string());
-                
-            format!("✅ @{} marked as attending: {}!", user_name, session_name)
-        }
-        _ => "Unknown action".to_string(),
-    };
+    bot.send_message(msg.chat.id, text)
+        .parse_mode(teloxide::types::ParseMode::Html) // Use V2 for better formatting
+        .reply_markup(main_menu_keyboard(&week.sessions))
+        .await?;
 
-    if let Some(MaybeInaccessibleMessage::Regular(msg)) = q.message {
-        bot.edit_message_text(msg.chat.id, msg.id, text)
-            .reply_markup(main_menu_keyboard(get_weekly_schedule()))
-            .await?;
-    }
-
-    bot.answer_callback_query(q.id).await?;
     Ok(())
 }
