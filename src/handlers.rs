@@ -35,8 +35,8 @@ pub async fn handle_commands(
                 let next_monday = now + Duration::days(days_to_next_monday as i64);
                 let next_sunday = next_monday + Duration::days(6);
 
-                weekly_attendance.start_date = next_monday.format("%d-%m-%Y").to_string();
-                weekly_attendance.end_date = next_sunday.format("%d-%m-%Y").to_string();
+                weekly_attendance.start_date = next_monday.format("%d/%m").to_string();
+                weekly_attendance.end_date = next_sunday.format("%d/%m").to_string();
 
                 // TODO: save state to DB before wiping state
 
@@ -107,7 +107,7 @@ fn main_menu_keyboard(trainings: &[TrainingSession]) -> InlineKeyboardMarkup {
 }
 
 fn generate_attendance_report(state: &WeeklyAttendance) -> String {
-    let header = format!("📅 <b>Week: {} to {}</b>\n\n", state.start_date, state.end_date);
+    let header = format!("📅 <b>Training Attendance {} to {}</b>\n\n", state.start_date, state.end_date);
     
     let body = state.sessions.iter().map(|s| {
         let attendees = if s.attendees.is_empty() {
@@ -120,7 +120,7 @@ fn generate_attendance_report(state: &WeeklyAttendance) -> String {
             format!("{}", list)
         };
         
-        format!("<b>{} {}</b> (@ {})\n{}\n", s.day, s.activity, s.location, attendees)
+        format!("<b>{} {}</b>, @ {} ({}👥)\n{}\n", s.day, s.activity, s.location, s.attendees.len(), attendees)
     }).collect::<Vec<_>>().join("\n");
 
     format!("{}{}", header, body)
