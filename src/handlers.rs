@@ -120,7 +120,7 @@ fn generate_attendance_report(state: &WeeklyAttendance) -> String {
             format!("{}", list)
         };
         
-        format!("<b>{} {}</b>, @ {} ({}👥)\n{}\n", s.day, s.activity, s.location, s.attendees.len(), attendees)
+        format!("<b>{} {}</b> @ {} ({}👥)\n{}\n", s.day, s.activity, s.location, s.attendees.len(), attendees)
     }).collect::<Vec<_>>().join("\n");
 
     format!("{}{}", header, body)
