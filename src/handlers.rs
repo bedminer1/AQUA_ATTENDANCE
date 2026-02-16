@@ -10,12 +10,18 @@ use crate::types::*;
 #[derive(BotCommands, Clone)]
 #[command(rename_rule = "lowercase", description = "Aquathallyon Commands:")]
 pub enum Command {
-    #[command(description = "More information about commands")]
+    #[command(description = "more information about commands")]
     Help,
     #[command(description = "start the attendance tracking for the new week.")]
     NewWeek,
     #[command(description = "save current state to db")]
     Save,
+
+    #[command(description = "add session: /add <day> <activity> <location>", parse_with = "split")]
+    Add { day: String, activity: String, location: String },
+    Delete(u8),
+    #[command(description = "interactive edit menu")]
+    Edit,
 }
 
 pub async fn handle_commands(
@@ -71,6 +77,71 @@ pub async fn handle_commands(
             }
 
             bot.send_message(msg.chat.id, "✅ Attendance successfully synced to Turso!").await?;
+        }
+        Command::Edit => {
+            // let week = state.sync_state.read();
+            // let buttons: Vec<Vec<InlineKeyboardButton>> = week.sessions.iter().map(|s| {
+            //     vec![InlineKeyboardButton::callback(
+            //         format!("✏️ Edit #{} ({} {})", s.id, s.day, s.activity),
+            //         format!("menu_edit_{}", s.id) // New prefix for your callback handler
+            //     )]
+            // }).collect();
+
+            // bot.send_message(msg.chat.id, "Select a session to modify:")
+            //     .reply_markup(InlineKeyboardMarkup::new(buttons))
+            //     .await?;
+        }
+        Command::Add { day, activity, location } => {
+            let (report, kb) = {
+                let mut weekly_attendance = state.sync_state.write();
+                let next_id = (weekly_attendance.sessions
+                        .iter()
+                        .map(|s| s.id)
+                        .max()
+                        .unwrap_or(0)) + 1;
+
+                let new_session = TrainingSession {
+                    id: next_id,
+                    day: day.clone(),
+                    activity: activity.clone(),
+                    location: location.clone(),
+                    attendees: vec![],
+                };
+
+                weekly_attendance.sessions.push(new_session);
+
+                (generate_attendance_report(&weekly_attendance), main_menu_keyboard(&weekly_attendance.sessions))
+            };
+
+            bot.send_message(msg.chat.id, format!("{}", report))
+                .parse_mode(teloxide::types::ParseMode::Html)
+                .reply_markup(kb)
+                .await?;
+        }
+        Command::Delete(id) => {
+            let (report, kb, success) = {
+            let mut weekly_attendance = state.sync_state.write();
+            
+            // Check if the ID actually exists before removing
+            let original_len = weekly_attendance.sessions.len();
+            weekly_attendance.sessions.retain(|s| s.id != id);
+            let deleted = weekly_attendance.sessions.len() < original_len;
+
+            (
+                generate_attendance_report(&weekly_attendance), 
+                main_menu_keyboard(&weekly_attendance.sessions),
+                deleted
+            )
+        }; // RwLockWriteGuard is dropped here
+
+        if success {
+            bot.send_message(msg.chat.id, format!("🗑️ <b>Session #{} deleted.</b>\n\n{}", id, report))
+                .parse_mode(teloxide::types::ParseMode::Html)
+                .reply_markup(kb)
+                .await?;
+        } else {
+            bot.send_message(msg.chat.id, format!("⚠️ Session #{} not found.", id)).await?;
+        }
         }
     }
 
@@ -140,7 +211,7 @@ fn generate_attendance_report(state: &WeeklyAttendance) -> String {
             format!("{}", list)
         };
         
-        format!("<b>{} {}</b> @ {} ({}👥)\n{}\n", s.day, s.activity, s.location, s.attendees.len(), attendees)
+        format!("<b>{} {}</b> @ {} ({} 👥)\n{}\n", s.day, s.activity, s.location, s.attendees.len(), attendees)
     }).collect::<Vec<_>>().join("\n");
 
     format!("{}{}", header, body)
