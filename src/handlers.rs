@@ -8,19 +8,34 @@ use chrono::{Duration, Local, Datelike};
 use crate::types::*;
 
 #[derive(BotCommands, Clone)]
-#[command(rename_rule = "lowercase", description = "Aquathallyon Commands:")]
+#[command(rename_rule = "snake_case", description = "Aquathallyon Commands:")]
 pub enum Command {
-    #[command(description = "more information about commands")]
+    #[command(description = "show this help message")]
     Help,
-    #[command(description = "start the attendance tracking for the new week.")]
+    
+    // --- CLUB MANAGEMENT (EXCO ONLY) ---
+    #[command(description = "reset attendance for a new week")]
     NewWeek,
-    #[command(description = "save current state to db")]
+    
+    // Usage: /add_club 1, Monday, Swim, USC, 18:00
+    #[command(description = "add club session: /add_club <order>, <day>, <act>, <loc>, <time>")]
+    Add(String), 
+
+    #[command(description = "delete club session by order number: /del_club <order>")]
+    Delete(u8),
+
+    #[command(description = "save current session structure to Turso")]
     Save,
 
-    #[command(description = "add session: /add <day> <activity> <location>", parse_with = "split")]
-    Add { day: String, activity: String, location: String },
-    Delete(u8),
-    #[command(description = "interactive edit menu")]
+    // --- PERSONAL LOGGING (FOR MEMBERS) ---
+    #[command(description = "log a personal workout: /log <activity>, <distance/duration>")]
+    Log(String),
+
+    #[command(description = "view your personal training history")]
+    History,
+
+    // --- INTERACTIVE ---
+    #[command(description = "open interactive edit menu for sessions")]
     Edit,
 }
 
@@ -91,26 +106,39 @@ pub async fn handle_commands(
             //     .reply_markup(InlineKeyboardMarkup::new(buttons))
             //     .await?;
         }
-        Command::Add { day, activity, location } => {
+        Command::Add(raw_args) => {
+            let parts: Vec<&str> = raw_args.split(',').map(|s| s.trim()).collect();
+                
+            if parts.len() < 5 {
+                bot.send_message(msg.chat.id, "❌ Format: /add_club order, day, activity, location, time").await?;
+                return Ok(());
+            }
+        
+            let order: usize = parts[0].parse().unwrap_or(1);
+            let day = parts[1].to_string();
+            let activity = parts[2].to_string();
+            let location = parts[3].to_string();
+            let time = parts[4].to_string();
+            
             let (report, kb) = {
-                let mut weekly_attendance = state.sync_state.write();
-                let next_id = (weekly_attendance.sessions
-                        .iter()
-                        .map(|s| s.id)
-                        .max()
-                        .unwrap_or(0)) + 1;
-
-                let new_session = TrainingSession {
-                    id: next_id,
-                    day: day.clone(),
-                    activity: activity.clone(),
-                    location: location.clone(),
-                    attendees: vec![],
-                };
-
-                weekly_attendance.sessions.push(new_session);
-
-                (generate_attendance_report(&weekly_attendance), main_menu_keyboard(&weekly_attendance.sessions))
+                let mut week = state.sync_state.write();
+                        let new_session = TrainingSession {
+                            id: order as u8, // Or generate a unique ID
+                            activity,
+                            location,
+                            day,
+                            attendees: vec![],
+                            time,
+                        };
+                
+                        // Insert at specific position or push
+                        if order > 0 && order <= week.sessions.len() {
+                            week.sessions.insert(order - 1, new_session);
+                        } else {
+                            week.sessions.push(new_session);
+                        }
+                
+                        (generate_attendance_report(&week), main_menu_keyboard(&week.sessions))
             };
 
             bot.send_message(msg.chat.id, format!("{}", report))
@@ -118,30 +146,65 @@ pub async fn handle_commands(
                 .reply_markup(kb)
                 .await?;
         }
-        Command::Delete(id) => {
+        Command::Delete(order) => {
             let (report, kb, success) = {
-            let mut weekly_attendance = state.sync_state.write();
-            
-            // Check if the ID actually exists before removing
-            let original_len = weekly_attendance.sessions.len();
-            weekly_attendance.sessions.retain(|s| s.id != id);
-            let deleted = weekly_attendance.sessions.len() < original_len;
+                let mut weekly_attendance = state.sync_state.write();
+                
+                // 1. Convert 1-indexed order to 0-indexed index
+                // Use saturating_sub to handle potential 0 input safely
+                let index = (order as usize).saturating_sub(1);
+        
+                // 2. Check if the index is within the bounds of the vector
+                if index < weekly_attendance.sessions.len() {
+                    // Remove returns the removed element, but we just need it gone
+                    weekly_attendance.sessions.remove(index);
+        
+                    (
+                        generate_attendance_report(&weekly_attendance), 
+                        main_menu_keyboard(&weekly_attendance.sessions),
+                        true
+                    )
+                } else {
+                    // Out of bounds - nothing to delete
+                    (
+                        generate_attendance_report(&weekly_attendance), 
+                        main_menu_keyboard(&weekly_attendance.sessions),
+                        false
+                    )
+                }
+            };
+        
+            if success {
+                bot.send_message(msg.chat.id, format!("🗑️ <b>Session at order #{} deleted.</b>\n\n{}", order, report))
+                    .parse_mode(teloxide::types::ParseMode::Html)
+                    .reply_markup(kb)
+                    .await?;
+            } else {
+                bot.send_message(msg.chat.id, format!("⚠️ Order #{} not found. Check the list and try again.", order))
+                    .await?;
+            }
+        }
+        Command::History => {
+            let (report, kb) = {
+                let week = state.sync_state.read();
+                (generate_attendance_report(&week), main_menu_keyboard(&week.sessions))
+            };
 
-            (
-                generate_attendance_report(&weekly_attendance), 
-                main_menu_keyboard(&weekly_attendance.sessions),
-                deleted
-            )
-        }; // RwLockWriteGuard is dropped here
-
-        if success {
-            bot.send_message(msg.chat.id, format!("🗑️ <b>Session #{} deleted.</b>\n\n{}", id, report))
+            bot.send_message(msg.chat.id, format!("{}", report))
                 .parse_mode(teloxide::types::ParseMode::Html)
                 .reply_markup(kb)
                 .await?;
-        } else {
-            bot.send_message(msg.chat.id, format!("⚠️ Session #{} not found.", id)).await?;
         }
+        Command::Log(_raw_args) => {
+            let (report, kb) = {
+                let week = state.sync_state.read();
+                (generate_log_report(&week), main_menu_keyboard(&week.sessions))
+            };
+
+            bot.send_message(msg.chat.id, format!("{}", report))
+                .parse_mode(teloxide::types::ParseMode::Html)
+                .reply_markup(kb)
+                .await?;
         }
     }
 
@@ -212,6 +275,17 @@ fn generate_attendance_report(state: &WeeklyAttendance) -> String {
         };
         
         format!("<b>{} {}</b> @ {} ({} 👥)\n{}\n", s.day, s.activity, s.location, s.attendees.len(), attendees)
+    }).collect::<Vec<_>>().join("\n");
+
+    format!("{}{}", header, body)
+}
+
+fn generate_log_report(state: &WeeklyAttendance) -> String {
+    let header = format!("📅 <b>Training Log {} to {}</b>\n\n", state.start_date, state.end_date);
+    
+    let body = state.sessions.iter().map(|s| {
+        
+        format!("<b>{} {}</b> @ {} ({} 👥)\n", s.day, s.activity, s.location, s.attendees.len())
     }).collect::<Vec<_>>().join("\n");
 
     format!("{}{}", header, body)

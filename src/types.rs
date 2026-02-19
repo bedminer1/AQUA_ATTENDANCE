@@ -41,6 +41,7 @@ pub struct TrainingSession {
     pub location: String,
     pub day: String,
     pub attendees: Vec<User>,
+    pub time: String,
 }
 
 impl TrainingSession {
