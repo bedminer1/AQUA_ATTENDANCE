@@ -110,7 +110,7 @@ pub async fn handle_commands(
             let parts: Vec<&str> = raw_args.split(',').map(|s| s.trim()).collect();
                 
             if parts.len() < 5 {
-                bot.send_message(msg.chat.id, "❌ Format: /add_club order, day, activity, location, time").await?;
+                bot.send_message(msg.chat.id, "❌ Format: /add order, day, activity, location, time").await?;
                 return Ok(());
             }
         
