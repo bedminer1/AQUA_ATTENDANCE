@@ -2,6 +2,7 @@ use serde::{ Serialize, Deserialize };
 use teloxide::types::{InlineKeyboardButton};
 use std::sync::{Arc, RwLock};
 use libsql::Builder;
+use std::collections::HashMap;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -20,7 +21,7 @@ impl AppState {
             .expect("Failed to connect to Turso");
 
         let conn = db.connect().expect("Failed to connect");
-        
+
         AppState {
             sync_state: SharedState::new(initial),
             db: conn,
@@ -28,10 +29,18 @@ impl AppState {
     }
 }
 
+// User Info
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct User {
-    pub telegram_id: u64,
-    pub alias: String, // Their @username or a custom nickname
+pub struct UserProfile {
+    pub alias: String,
+}
+
+// Link bw user and session
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Attendee {
+    pub user_id: u64,
+    #[serde(default)]
+    pub cancelled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,7 +49,7 @@ pub struct TrainingSession {
     pub activity: String,
     pub location: String,
     pub day: String,
-    pub attendees: Vec<User>,
+    pub attendees: Vec<Attendee>,
     pub time: String,
 }
 
@@ -56,6 +65,7 @@ pub struct WeeklyAttendance {
     pub start_date: String, // e.g., "2026-02-02"
     pub end_date: String,   // e.g., "2026-02-08"
     pub sessions: Vec<TrainingSession>,
+    pub user_registry: HashMap<u64, UserProfile>,
 }
 
 impl WeeklyAttendance {
@@ -72,7 +82,6 @@ impl SharedState {
         Self(Arc::new(RwLock::new(initial)))
     }
 
-    // Helper to make your handlers cleaner
     pub fn read(&self) -> std::sync::RwLockReadGuard<'_, WeeklyAttendance> {
         self.0.read().expect("Lock poisoned")
     }

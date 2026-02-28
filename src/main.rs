@@ -6,6 +6,7 @@ mod types;
 mod handlers;
 use crate::types::*;
 use crate::handlers::*;
+use chrono::{Duration, Local, Datelike};
 
 #[tokio::main]
 async fn main() {
@@ -13,9 +14,13 @@ async fn main() {
     pretty_env_logger::init();
     log::info!("Starting aquathallyon bot...");
 
+    let now = Local::now().date_naive();
+    let days_to_next_monday = (7 - now.weekday().num_days_from_monday()) % 7;
+    let next_monday = now + Duration::days(days_to_next_monday as i64);
+    let next_sunday = next_monday + Duration::days(6);
     let initial_state = WeeklyAttendance {
-        start_date: "2026-02-02".into(),
-        end_date: "2026-02-08".into(),
+        start_date: next_monday.format("%d/%m").to_string(),
+        end_date: next_sunday.format("%d/%m").to_string(),
         sessions: vec![
             TrainingSession { id: 1, activity: "Swim".into(), location: "USC Pool".into(), day: "Monday".into(), attendees: vec![], time: "5:00 PM".into() },
             TrainingSession { id: 2, activity: "Run".into(), location: "NUS Track".into(), day: "Tuesday".into(), attendees: vec![], time: "6:00 PM".into() },
@@ -24,6 +29,7 @@ async fn main() {
             TrainingSession { id: 5, activity: "Swim".into(), location: "USC Pool".into(), day: "Friday".into(), attendees: vec![], time: "5:00 PM".into() },
             TrainingSession { id: 6, activity: "Bricks".into(), location: "Palawan Beach".into(), day: "Saturday".into(), attendees: vec![], time: "8:30 AM".into() },
         ],
+        user_registry: std::collections::HashMap::new(),
     };
 
     let app_state = AppState::new(initial_state).await;
